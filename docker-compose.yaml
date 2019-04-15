@@ -1,0 +1,11 @@
+version: '3'
+services:
+  alice:
+    build: .
+    hostname: alice
+  bob:
+    build: .
+    hostname: bob
+  charly:
+    build: .
+    hostname: charly

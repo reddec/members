@@ -57,6 +57,11 @@ func Node() *NodeBuilder {
 	}
 }
 
+func (n *NodeBuilder) ID(id string) *NodeBuilder {
+	n.info.ID = id
+	return n
+}
+
 func (n *NodeBuilder) Port(num int) *NodeBuilder {
 	n.port = num
 	return n
