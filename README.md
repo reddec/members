@@ -5,6 +5,8 @@
 * protocol independent
 * supports GRPC
 
+![diag](https://user-images.githubusercontent.com/6597086/56138741-0e551400-5fca-11e9-8f2d-40e7bea49d94.png)
+
 
 ## Automatic service definition
 
