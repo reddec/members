@@ -1,0 +1,6 @@
+digraph {
+  router[style=dotted label="multicast\ndevice"]
+  alice -> router [label="id,services"]; 
+  router -> bob [label="id,services"];
+  router -> charly [label="id,services"];
+}
