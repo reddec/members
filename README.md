@@ -7,8 +7,9 @@
 
 ![diag](https://user-images.githubusercontent.com/6597086/56138741-0e551400-5fca-11e9-8f2d-40e7bea49d94.png)
 
+## Use-cases
 
-## Automatic service definition
+### Automatic service definition
 
 1. initialize node
 2. make simple TCP acceptor on a random port
@@ -26,7 +27,7 @@ node.Start()
 ```
 
 
-## GRPC server
+### GRPC server
 
 
 1. initialize node
@@ -45,7 +46,7 @@ grpcServer.Serve(listener)
 ```
 
 
-## Native TCP client
+### Native TCP client
 
 
 ```go
@@ -57,7 +58,7 @@ conn, err := manager.Dial("echo") // iterate over all services in loop until con
 ```
 
 
-## GRPC client
+### GRPC client
 
 ```go
 node := Node()
@@ -65,3 +66,16 @@ manager := node.Start()
 
 grpcConn, err := grpc.Dial("echo", manager.WithGRPC())
 ```
+
+## Protocol
+
+Almost all parameters can be changed during node initialization, however, default parameters are:
+
+* Multicast group IP: `224.0.0.145`
+* Port: `33214`
+* Buffer size: `8192` bytes
+* TTL: `5s`
+
+Packet data is message pack tuple:
+
+`[ID: string, [[ServiceName: string, Port: uint16 ] ,...]]`
