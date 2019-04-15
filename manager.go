@@ -10,9 +10,8 @@ import (
 )
 
 type Manager struct {
-	lock     sync.RWMutex
-	members  map[string]*Member
-	watchers map[string][]*Watcher
+	lock    sync.RWMutex
+	members map[string]*Member
 }
 
 func (m *Manager) Discovered(member *Member) {
@@ -22,7 +21,6 @@ func (m *Manager) Discovered(member *Member) {
 		m.members = make(map[string]*Member)
 	}
 	m.members[member.Info.ID] = member
-	m.unsafeUpdateWatchers()
 }
 
 func (m *Manager) Updated(member *Member) {
@@ -32,14 +30,12 @@ func (m *Manager) Updated(member *Member) {
 		m.members = make(map[string]*Member)
 	}
 	m.members[member.Info.ID] = member
-	m.unsafeUpdateWatchers()
 }
 
 func (m *Manager) Lost(member *Member) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	delete(m.members, member.Info.ID)
-	m.unsafeUpdateWatchers()
 }
 
 func (m *Manager) Members() []*Member {
