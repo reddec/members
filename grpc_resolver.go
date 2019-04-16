@@ -4,6 +4,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-func (mg *Manager) WithGRPC() grpc.DialOption {
-	return grpc.WithContextDialer(mg.DialContext)
+func (node *Node) WithGRPC() grpc.DialOption {
+	return grpc.WithContextDialer(node.DialContext)
 }

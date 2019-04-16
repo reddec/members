@@ -18,24 +18,19 @@ type Info struct {
 	Services []Service
 }
 
-func (n *NodeBuilder) Service(name string, port int) *NodeBuilder {
-	n.info.Services = append(n.info.Services, Service{Name: name, Port: uint16(port)})
-	return n
-}
-
-func (n *NodeBuilder) Listen(serviceName string) net.Listener {
+func (node *Node) Listen(serviceName string) net.Listener {
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		panic(err)
 	}
-	n.Service(serviceName, listener.Addr().(*net.TCPAddr).Port)
+	node.Declare(serviceName, uint16(listener.Addr().(*net.TCPAddr).Port))
 	return listener
 }
 
-func (n *NodeBuilder) Simple(name string, callback func(ctx context.Context, conn net.Conn)) *NodeBuilder {
-	listener := n.Listen(name)
+func (node *Node) Simple(name string, callback func(ctx context.Context, conn net.Conn)) *Node {
+	listener := node.Listen(name)
 	go func() {
-		<-n.ctx.Done()
+		<-node.ctx.Done()
 		listener.Close()
 	}()
 	go func() {
@@ -46,9 +41,9 @@ func (n *NodeBuilder) Simple(name string, callback func(ctx context.Context, con
 			if err != nil {
 				break
 			}
-			go callback(n.ctx, conn)
+			go callback(node.ctx, conn)
 		}
 
 	}()
-	return n
+	return node
 }

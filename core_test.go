@@ -14,8 +14,18 @@ func TestNode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	nodeA := Node().Context(ctx).TTL(1 * time.Second)
-	nodeB := Node().Context(ctx).TTL(1 * time.Second)
+	nodeA := New().ID("alice").Context(ctx).TTL(1 * time.Second).Start()
+	nodeB := New().ID("bob").Context(ctx).TTL(1 * time.Second).Start()
+
+	if nodeA.Error() != nil {
+		t.Error(nodeA.Error())
+		return
+	}
+
+	if nodeB.Error() != nil {
+		t.Error(nodeB.Error())
+		return
+	}
 
 	nodeA.Simple("echo", func(ctx context.Context, conn net.Conn) {
 		done := make(chan struct{})
@@ -30,12 +40,9 @@ func TestNode(t *testing.T) {
 		close(done)
 	})
 
-	alice, cA := nodeA.Start()
-	_, cB := nodeB.Start()
-
 	time.Sleep(1 * time.Second)
 
-	dialer := alice.WithGRPC()
+	dialer := nodeA.WithGRPC()
 
 	conn, err := grpc.DialContext(ctx, "echo", grpc.WithInsecure(), dialer)
 	if err != nil {
@@ -44,10 +51,10 @@ func TestNode(t *testing.T) {
 		t.Log("resolved!", conn.Target())
 		defer conn.Close()
 	}
-	err = <-cA
-	fmt.Println("alice done:", err)
-	err = <-cB
-	fmt.Println("bob done:", err)
+	<-nodeA.Done()
+	fmt.Println("alice done")
+	<-nodeB.Done()
+	fmt.Println("bob done")
 
 	select {
 	case <-ctx.Done():

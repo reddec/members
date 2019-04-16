@@ -2,13 +2,13 @@ package members
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"golang.org/x/net/ipv4"
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -27,12 +27,6 @@ type mockLogger struct {
 
 func (ml *mockLogger) Println(...interface{}) {}
 
-type Handler interface {
-	Discovered(member *Member)
-	Lost(member *Member)
-	Updated(member *Member)
-}
-
 type NodeBuilder struct {
 	ctx        context.Context
 	ttl        time.Duration
@@ -43,7 +37,7 @@ type NodeBuilder struct {
 	logger     Logger
 }
 
-func Node() *NodeBuilder {
+func New() *NodeBuilder {
 	return &NodeBuilder{
 		info: Info{
 			ID: uuid.New().String(),
@@ -96,44 +90,34 @@ func (n *NodeBuilder) Context(ctx context.Context) *NodeBuilder {
 	return n
 }
 
-func (n *NodeBuilder) Start() (*Manager, <-chan error) {
-	mgr := &Manager{}
-	return mgr, n.StartHandler(mgr)
-}
+func (n *NodeBuilder) Start() *Node {
+	ctx, cancel := context.WithCancel(n.ctx)
+	node := &Node{
+		info:    n.info,
+		update:  make(chan struct{}),
+		done:    make(chan struct{}),
+		ctx:     ctx,
+		members: map[string]*Member{},
+		logger:  n.logger,
+	}
 
-func (n *NodeBuilder) StartHandler(handler Handler) <-chan error {
-	done := make(chan error, 1)
-	if handler == nil {
-		done <- errors.New("handler not defined")
-		close(done)
-		return done
-	}
-	dataMsg, err := n.info.MarshalMsg(nil)
-	if err != nil {
-		done <- err
-		close(done)
-		return done
-	}
 	multicastAddr, err := net.ResolveUDPAddr("udp", fmt.Sprint(n.ip, ":", n.port))
 	if err != nil {
 		n.logger.Println("failed list all available interfaces:", err)
-		done <- err
-		close(done)
-		return done
+		cancel()
+		return node.withError(err)
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		n.logger.Println("failed to list all available interfaces:", err)
-		done <- err
-		close(done)
-		return done
+		cancel()
+		return node.withError(err)
 	}
 	udpConn, err := net.ListenUDP("udp", multicastAddr)
 	if err != nil {
 		n.logger.Println("failed to listen on udp address", multicastAddr.String(), ":", err)
-		done <- err
-		close(done)
-		return done
+		cancel()
+		return node.withError(err)
 	}
 
 	// join group
@@ -145,50 +129,122 @@ func (n *NodeBuilder) StartHandler(handler Handler) <-chan error {
 			if err != nil {
 				n.logger.Println("failed to join multicast group", multicastAddr.String(), "on interface", ifi.Name, ":", err)
 				udpConn.Close()
-				done <- err
-				close(done)
-				return done
+				cancel()
+				return node.withError(err)
 			}
 		}
 	}
 
 	go func() {
+		defer udpConn.Close()
+		defer cancel()
 		n.logger.Println("node loop started")
-		done <- nodeLoop(n.ctx, n.ttl, dataMsg, udpConn, n.bufferSize, handler, multicastAddr, n.logger)
+		node.runLoop(n.ttl, udpConn, n.bufferSize, multicastAddr)
 		n.logger.Println("node loop finished")
-		close(done)
-		udpConn.Close()
 	}()
-	return done
+	return node
 }
 
-func nodeLoop(ctx context.Context, ttl time.Duration, id []byte, conn net.PacketConn, bufferSize int, handler Handler, castAddress net.Addr, logger Logger) error {
-	type packet struct {
-		Addr net.Addr
-		Data []byte
-	}
+type Node struct {
+	ctx    context.Context
+	logger Logger
+	err    error
+	done   chan struct{}
+	// internal services management
+	infoLock sync.RWMutex
+	info     Info
+	update   chan struct{}
+	// members management
+	membersLock sync.RWMutex
+	members     map[string]*Member
+}
 
-	done := make(chan error, 1)
+func (node *Node) Error() error {
+	return node.err
+}
+
+func (node *Node) withError(err error) *Node {
+	node.err = err
+	close(node.done)
+	return node
+}
+
+func (node *Node) Done() <-chan struct{} {
+	return node.done
+}
+
+func (node *Node) Notify() {
+	select {
+	case node.update <- struct{}{}:
+	case <-node.ctx.Done():
+	}
+}
+
+func (node *Node) Declare(serviceName string, port uint16) {
+	node.infoLock.Lock()
+	updated := false
+	for i, srv := range node.info.Services {
+		if srv.Name == serviceName {
+			node.info.Services[i].Port = port
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		node.info.Services = append(node.info.Services, Service{Port: port, Name: serviceName})
+	}
+	node.infoLock.Unlock()
+}
+
+func (node *Node) Forget(serviceName string) {
+	node.infoLock.Lock()
+	for i, srv := range node.info.Services {
+		if srv.Name == serviceName {
+			node.info.Services = append(node.info.Services[:i], node.info.Services[i+1:]...)
+			break
+		}
+	}
+	node.infoLock.Unlock()
+}
+
+func (node *Node) servicesInfo() []byte {
+	node.infoLock.RLock()
+	data, err := node.info.MarshalMsg(nil)
+	node.infoLock.RUnlock()
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+type packet struct {
+	Addr net.Addr
+	Data []byte
+}
+
+func (node *Node) runListenerLoop(conn net.PacketConn, bufferSize int, data chan<- packet) error {
+	defer close(node.done)
+	defer close(data)
+	for {
+		buffer := make([]byte, bufferSize) // TODO: make a zero-copy buffer
+		size, addr, err := conn.ReadFrom(buffer)
+		if err != nil {
+			return err
+		}
+		select {
+		case data <- packet{Addr: addr, Data: buffer[:size]}:
+		case <-node.ctx.Done():
+			return node.ctx.Err()
+		}
+	}
+}
+
+func (node *Node) runLoop(ttl time.Duration, conn net.PacketConn, bufferSize int, castAddress net.Addr) error {
+	defer conn.Close()
+
 	data := make(chan packet)
 
-	members := map[string]*Member{}
-
-	go func() {
-		defer close(done)
-		for {
-			buffer := make([]byte, bufferSize) // TODO: make a zero-copy buffer
-			n, addr, err := conn.ReadFrom(buffer)
-			if err != nil {
-				done <- err
-				return
-			}
-			select {
-			case data <- packet{Addr: addr, Data: buffer[:n]}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	go node.runListenerLoop(conn, bufferSize, data)
 
 	cleanupTicker := time.NewTicker(ttl)
 	defer cleanupTicker.Stop()
@@ -196,60 +252,49 @@ func nodeLoop(ctx context.Context, ttl time.Duration, id []byte, conn net.Packet
 	keepAliveTicker := time.NewTicker(ttl / 3)
 	defer keepAliveTicker.Stop()
 
-	logger.Println("cleanup interval:", ttl)
-	logger.Println("keep-alive interval:", ttl/3)
+	node.logger.Println("cleanup interval:", ttl)
+	node.logger.Println("keep-alive interval:", ttl/3)
 	// send notification about your self
-	conn.WriteTo(id, castAddress)
+	conn.WriteTo(node.servicesInfo(), castAddress)
 LOOP:
 	for {
 		select {
-		case msg := <-data:
+		case msg, ok := <-data:
+			if !ok {
+				break
+			}
 			var serviceInfo Info
 			_, err := serviceInfo.UnmarshalMsg(msg.Data)
 			if err != nil {
 				// just skip
-				logger.Println("can't decode message from", msg.Addr, ":", err)
+				node.logger.Println("can't decode message from", msg.Addr, ":", err)
 				continue
 			}
-
-			_, exists := members[serviceInfo.ID]
-
 			mem := &Member{
 				Addr: msg.Addr,
 				Info: serviceInfo,
 				At:   time.Now(),
 			}
-			members[serviceInfo.ID] = mem
-			if !exists {
-				logger.Println("new service discovered:", serviceInfo.ID)
-				handler.Discovered(mem)
-			} else {
-				logger.Println("service", serviceInfo.ID, "keep-alive")
-				handler.Updated(mem)
-			}
+			node.upsertMember(mem)
 		case <-cleanupTicker.C:
 			// clean deprecated members
 			now := time.Now()
-			var toDel []string
-			for key, member := range members {
+			members := node.Members()
+			for _, member := range members {
 				if now.Sub(member.At) > ttl {
-					handler.Lost(member)
-					toDel = append(toDel, key)
+					node.logger.Println("service", member.Info.ID, "removed due TTL")
+					node.removeMember(member)
 				}
-			}
-			for _, k := range toDel {
-				logger.Println("service", k, "removed due TTL")
-				delete(members, k)
 			}
 		case <-keepAliveTicker.C:
 			// send notification about your self
-			conn.WriteTo(id, castAddress)
-		case <-done:
-			break LOOP
-		case <-ctx.Done():
+			conn.WriteTo(node.servicesInfo(), castAddress)
+		case <-node.update:
+			// force update
+			conn.WriteTo(node.servicesInfo(), castAddress)
+		case <-node.ctx.Done():
 			break LOOP
 		}
 	}
-	conn.Close()
-	return <-done
+	return node.ctx.Err()
 }

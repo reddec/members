@@ -1,9 +1,11 @@
 # Distributed multicast-based discovery
+[![GoDoc](https://godoc.org/github.com/reddec/members?status.svg)](https://godoc.org/github.com/reddec/members)
 
 `go get -v github.com/reddec/memebers`
 
 * protocol independent
 * supports GRPC
+
 
 ![diag](https://user-images.githubusercontent.com/6597086/56138741-0e551400-5fca-11e9-8f2d-40e7bea49d94.png)
 
@@ -17,12 +19,11 @@
 4. start broadcasting and listening
 
 ```go
-node := Node()
+node := New().Start()
 node.Simple("echo", func(ctx context.Context, conn net.Conn){
 	defer conn.Close()
     io.Copy(conn, conn)	
 })
-node.Start()
 // do other stuff
 ```
 
@@ -35,12 +36,10 @@ node.Start()
 3. serve grpc server
 
 ```go
-node := Node()
+node := New().Start()
 
 listener := node.Listen("myService")
 defer listener.Close()
-
-node.Start()
 
 grpcServer.Serve(listener)	
 ```
@@ -50,10 +49,9 @@ grpcServer.Serve(listener)
 
 
 ```go
-node := Node()
-manager := node.Start()
+node := New().Start()
 
-conn, err := manager.Dial("echo") // iterate over all services in loop until connected
+conn, err := node.Dial("echo") // iterate over all services in loop until connected
 // do some stuff
 ```
 
@@ -61,10 +59,9 @@ conn, err := manager.Dial("echo") // iterate over all services in loop until con
 ### GRPC client
 
 ```go
-node := Node()
-manager := node.Start()
+node := New().Start()
 
-grpcConn, err := grpc.Dial("echo", manager.WithGRPC())
+grpcConn, err := grpc.Dial("echo", node.WithGRPC())
 ```
 
 ## Protocol
