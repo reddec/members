@@ -35,6 +35,7 @@ type NodeBuilder struct {
 	port       int
 	info       Info
 	logger     Logger
+	interfaces []string
 }
 
 func New() *NodeBuilder {
@@ -63,6 +64,11 @@ func (n *NodeBuilder) Port(num int) *NodeBuilder {
 
 func (n *NodeBuilder) Logger(logger Logger) *NodeBuilder {
 	n.logger = logger
+	return n
+}
+
+func (n *NodeBuilder) Interfaces(interfaces ...string) *NodeBuilder {
+	n.interfaces = interfaces
 	return n
 }
 
@@ -121,9 +127,13 @@ func (n *NodeBuilder) Start() *Node {
 	}
 
 	// join group
+	allowedInterfaces := map[string]bool{}
+	for _, ifName := range n.interfaces {
+		allowedInterfaces[ifName] = true
+	}
 	wrapped := ipv4.NewPacketConn(udpConn)
 	for _, ifi := range interfaces {
-		if ifi.Flags&net.FlagMulticast != 0 {
+		if ifi.Flags&net.FlagMulticast != 0 && (len(allowedInterfaces) == 0 || allowedInterfaces[ifi.Name]) {
 			n.logger.Println("multicast interface:", ifi.Name)
 			err = wrapped.JoinGroup(&ifi, multicastAddr)
 			if err != nil {
