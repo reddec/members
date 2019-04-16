@@ -15,7 +15,7 @@ func main() {
 		interval = flag.Duration("interval", 1*time.Second, "interval to print")
 	)
 	flag.Parse()
-	node, done := members.Node().ID(*id).Start()
+	node := members.New().ID(*id).Start()
 	c := time.Tick(*interval)
 	for {
 		for _, m := range node.Members() {
@@ -24,7 +24,8 @@ func main() {
 		fmt.Println("-------------")
 		select {
 		case <-c:
-		case err := <-done:
+		case <-node.Done():
+			err := node.Error()
 			if err != nil {
 				fmt.Println("NODE", *id, "finished with error:", err)
 			} else {
