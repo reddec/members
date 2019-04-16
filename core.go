@@ -165,8 +165,10 @@ type Node struct {
 	info     Info
 	update   chan struct{}
 	// members management
-	membersLock sync.RWMutex
-	members     map[string]*Member
+	membersLock  sync.RWMutex
+	members      map[string]*Member
+	callbackLock sync.RWMutex
+	callbacks    []MemberHandler
 }
 
 func (node *Node) Error() error {

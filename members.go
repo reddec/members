@@ -6,6 +6,31 @@ import (
 	"net"
 )
 
+type MemberChange int
+
+const (
+	MemberAdded MemberChange = iota
+	MemberRemoved
+	MemberUpdated
+)
+
+type MemberHandler func(member *Member, change MemberChange)
+
+func (node *Node) Watch(handler MemberHandler) {
+	node.callbackLock.Lock()
+	defer node.callbackLock.Unlock()
+	node.callbacks = append(node.callbacks, handler)
+}
+
+func (node *Node) notifyWatchers(member *Member, change MemberChange) {
+	node.callbackLock.RLock()
+	shallowCopy := node.callbacks
+	node.callbackLock.RUnlock()
+	for _, w := range shallowCopy {
+		w(member, change)
+	}
+}
+
 func (node *Node) Members() []*Member {
 	var nodes = make([]*Member, 0, len(node.members))
 	node.membersLock.RLock()
@@ -22,13 +47,20 @@ func (node *Node) upsertMember(member *Member) {
 	if node.members == nil {
 		node.members = make(map[string]*Member)
 	}
+	_, exists := node.members[member.Info.ID]
 	node.members[member.Info.ID] = member
+	if exists {
+		node.notifyWatchers(member, MemberUpdated)
+	} else {
+		node.notifyWatchers(member, MemberAdded)
+	}
 }
 
 func (node *Node) removeMember(member *Member) {
 	node.membersLock.Lock()
 	defer node.membersLock.Unlock()
 	delete(node.members, member.Info.ID)
+	node.notifyWatchers(member, MemberRemoved)
 }
 
 func (node *Node) IP(id string) (string, bool) {

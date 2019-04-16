@@ -5,32 +5,30 @@ import (
 	"fmt"
 	"members"
 	"os"
-	"time"
 )
 
 func main() {
 	name, _ := os.Hostname()
 	var (
-		id       = flag.String("id", name, "unique node id")
-		interval = flag.Duration("interval", 1*time.Second, "interval to print")
+		id = flag.String("id", name, "unique node id")
 	)
 	flag.Parse()
 	node := members.New().ID(*id).Start()
-	c := time.Tick(*interval)
-	for {
-		for _, m := range node.Members() {
-			fmt.Println("NODE", *id, "knows", m.Info.ID, "at", m.Addr)
+
+	node.Watch(func(m *members.Member, change members.MemberChange) {
+		switch change {
+		case members.MemberAdded:
+			fmt.Println("[", *id, "]", "discovered", m.Info.ID, "at", m.Addr)
+		case members.MemberRemoved:
+			fmt.Println("[", *id, "]", "lost", m.Info.ID, "at", m.Addr)
 		}
-		fmt.Println("-------------")
-		select {
-		case <-c:
-		case <-node.Done():
-			err := node.Error()
-			if err != nil {
-				fmt.Println("NODE", *id, "finished with error:", err)
-			} else {
-				fmt.Println("NODE", *id, "finished without error")
-			}
-		}
+	})
+	<-node.Done()
+	err := node.Error()
+	if err != nil {
+		fmt.Println("NODE", *id, "finished with error:", err)
+		os.Exit(1)
+	} else {
+		fmt.Println("NODE", *id, "finished without error")
 	}
 }
